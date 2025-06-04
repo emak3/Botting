@@ -1,14 +1,37 @@
+import { Events, Client, Routes, ActivityType } from "discord.js";
+import { getConfig } from '../../config/config.mjs';
 import { initLogger } from '../../utils/logger.mjs';
-
 const log = initLogger();
 
-/**
- * @param {Client} client
- */
-export async function readyEvent(client) {
-  try {
-    log.info(`準備完了: ${client.user.tag} としてログインしました`);
-  } catch (error) {
-    log.error('readyイベント処理中にエラーが発生しました:', error);
-  }
+export default {
+    name: Events.ClientReady,
+    /**
+     * @param {Client} client
+     */
+    async execute(client) {
+
+        await getConfig();
+    
+        client.user.setActivity({
+            name: 'test',
+            type: ActivityType.Playing
+        });
+        log.info('online!');
+
+        const commands = [];
+        for (const command of client.commands.values()) {
+            commands.push(command.command.toJSON());
+        }
+        (async () => {
+            try {
+                log.info(`Started refreshing ${commands.length} application (/) commands.`);
+                const data = await client.rest.put(Routes.applicationCommands(client.user.id), {
+                    body: commands,
+                });
+                log.info(`${data.length} 個のApplication Commandsを登録。`);
+            } catch (error) {
+                log.error(error);
+            }
+        })();
+    }
 }

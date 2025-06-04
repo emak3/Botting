@@ -1,14 +1,15 @@
-import { initLogger } from '../../utils/logger.mjs';
+import { Events, BaseInteraction } from "discord.js";
 
-const log = initLogger();
-
-/**
- * @param {Interaction} interaction
- */
-export async function interactionEvent(interaction) {
-  try {
-    
-  } catch (error) {
-    log.error('interactionイベント処理中にエラーが発生しました:', error);
-  }
+export default {
+    name: Events.InteractionCreate,
+    /**
+     * @param {BaseInteraction} interaction
+     */
+    async execute(interaction) {
+        for (const value of interaction.client.interactions) {
+            if (typeof value === 'function') {
+                await value(interaction);
+            }
+        }
+    }
 }

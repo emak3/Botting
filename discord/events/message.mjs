@@ -1,14 +1,15 @@
-import { initLogger } from '../../utils/logger.mjs';
+import { Events, Message } from "discord.js";
 
-const log = initLogger();
-
-/**
- * @param {Message} message
- */
-export async function messageEvent(message) {
-  try {
-    if (message.author.bot) return;
-  } catch (error) {
-    log.error('messageイベント処理中にエラーが発生しました:', error);
-  }
+export default {
+    name: Events.MessageCreate,
+    /**
+     * @param {Message} message
+     */
+    async execute(message) {
+        for (const value of message.client.messages) {
+            if (typeof value === 'function') {
+                await value(message);
+            }
+        }
+    }
 }
