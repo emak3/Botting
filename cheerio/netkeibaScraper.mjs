@@ -52,14 +52,23 @@ class NetkeibaScraper {
         maxRedirects: 5,
       });
 
-      // EUC-JP → UTF-8 変換
-      const decodedData = handleEncoding(response.data);
+      // レスポンスオブジェクトも渡してエンコーディングを適切に処理
+      const decodedData = handleEncoding(response.data, response);
       const $ = cheerio.load(decodedData);
 
       // メインテーブルの確認
       const mainTable = $('.ShutubaTable, .RaceTable01, .Shutuba_Table').first();
       if (!mainTable.length) {
-        throw new Error('Race table not found');
+        console.log('Race table not found, checking alternative selectors...');
+        // 代替セレクタもチェック
+        const altTable = $('table').filter((i, el) => {
+          const text = $(el).text();
+          return text.includes('枠') || text.includes('馬番') || text.includes('馬名');
+        }).first();
+        
+        if (!altTable.length) {
+          throw new Error('Race table not found');
+        }
       }
 
       return this.parseHorseData($);
@@ -77,29 +86,32 @@ class NetkeibaScraper {
     const horses = [];
     const raceInfo = this.extractRaceInfo($);
 
-    // 各馬のデータを抽出
-    $('.HorseList, tr[id^="tr_"]').each((index, element) => {
+    // 各馬のデータを抽出 - より柔軟なセレクタを使用
+    $('.HorseList, tr[id^="tr_"], .RaceTable01 tr, .ShutubaTable tr').each((index, element) => {
       const $row = $(element);
       
-      // 馬名の抽出
-      const $horseName = $row.find('.HorseName a, .HorseInfo .HorseName a');
+      // ヘッダー行をスキップ
+      if ($row.find('th').length > 0) return;
+      
+      // 馬名の抽出 - より多くのパターンに対応
+      const $horseName = $row.find('.HorseName a, .HorseInfo .HorseName a, td a[href*="/horse/"]').first();
       if (!$horseName.length) return;
 
       const horse = {
-        frameNumber: this.extractText($row.find('.Waku1, .Waku2, .Waku3, .Waku4, .Waku5, .Waku6, .Waku7, .Waku8')),
-        horseNumber: this.extractText($row.find('[class*="Umaban"]')),
+        frameNumber: this.extractFrameNumber($row, $),
+        horseNumber: this.extractHorseNumber($row, $),
         name: $horseName.text().trim(),
         url: $horseName.attr('href'),
         horseId: this.extractHorseId($horseName.attr('href')),
-        age: this.extractText($row.find('.Barei')),
-        weight: this.extractText($row.find('td').eq(5)), // 通常6番目のtdが斤量
-        odds: this.extractOdds($row),
-        popularity: this.extractPopularity($row),
-        jockey: this.extractJockey($row),
-        trainer: this.extractTrainer($row),
+        age: this.extractAge($row, $),
+        weight: this.extractWeight($row, $),
+        odds: this.extractOdds($row, $),
+        popularity: this.extractPopularity($row, $),
+        jockey: this.extractJockey($row, $),
+        trainer: this.extractTrainer($row, $),
       };
 
-      if (horse.name) {
+      if (horse.name && horse.name !== '') {
         horses.push(horse);
       }
     });
@@ -109,6 +121,7 @@ class NetkeibaScraper {
       horses,
       totalHorses: horses.length,
       scrapedAt: new Date().toISOString(),
+      method: 'cheerio'
     };
   }
 
@@ -117,44 +130,119 @@ class NetkeibaScraper {
    */
   extractRaceInfo($) {
     return {
-      title: $('.RaceName, .race_name, h1').first().text().trim(),
-      date: $('.RaceData01, .race_date').first().text().trim(),
-      course: $('.RaceData02, .course_info').first().text().trim(),
-      class: $('.RaceData03, .race_class').first().text().trim(),
+      title: $('.RaceName, .race_name, h1.raceTitle').first().text().trim() || 'レース情報',
+      date: $('.RaceData01, .race_date, .raceData01').first().text().trim() || 'N/A',
+      course: $('.RaceData02, .course_info, .raceData02').first().text().trim() || 'N/A',
+      class: $('.RaceData03, .race_class, .raceData03').first().text().trim() || 'N/A',
     };
+  }
+
+  /**
+   * 枠番の抽出
+   */
+  extractFrameNumber($row, $) {
+    // 複数のクラス名パターンに対応
+    const frameElement = $row.find('[class*="Waku"], td.waku').first();
+    if (frameElement.length) {
+      return frameElement.text().trim();
+    }
+    
+    // td要素から直接取得を試みる（通常1番目）
+    const firstTd = $row.find('td').eq(0);
+    const text = firstTd.text().trim();
+    if (text && /^\d+$/.test(text)) {
+      return text;
+    }
+    
+    return 'N/A';
+  }
+
+  /**
+   * 馬番の抽出
+   */
+  extractHorseNumber($row, $) {
+    const horseNumElement = $row.find('[class*="Umaban"], td.umaban').first();
+    if (horseNumElement.length) {
+      return horseNumElement.text().trim();
+    }
+    
+    // td要素から直接取得を試みる（通常2番目）
+    const secondTd = $row.find('td').eq(1);
+    const text = secondTd.text().trim();
+    if (text && /^\d+$/.test(text)) {
+      return text;
+    }
+    
+    return 'N/A';
+  }
+
+  /**
+   * 年齢の抽出
+   */
+  extractAge($row, $) {
+    const ageElement = $row.find('.Barei, td.barei').first();
+    if (ageElement.length) {
+      return ageElement.text().trim();
+    }
+    
+    // 性齢の情報を含むtdを探す
+    const ageTd = $row.find('td').filter((i, el) => {
+      const text = $(el).text().trim();
+      return /^[牡牝セ][0-9]+$/.test(text);
+    }).first();
+    
+    return ageTd.text().trim() || 'N/A';
+  }
+
+  /**
+   * 斤量の抽出
+   */
+  extractWeight($row, $) {
+    const weightElement = $row.find('.Futan, td.futan').first();
+    if (weightElement.length) {
+      return weightElement.text().trim();
+    }
+    
+    // 数値のみのtdで斤量らしきものを探す
+    const weightTd = $row.find('td').filter((i, el) => {
+      const text = $(el).text().trim();
+      return /^\d+(\.\d+)?$/.test(text) && parseFloat(text) >= 48 && parseFloat(text) <= 65;
+    }).first();
+    
+    return weightTd.text().trim() || 'N/A';
   }
 
   /**
    * オッズの抽出（動的コンテンツのため初期値は取得困難）
    */
-  extractOdds($row) {
-    const oddsElement = $row.find('[id^="odds-"], .Popular span, .odds').first();
+  extractOdds($row, $) {
+    const oddsElement = $row.find('[id^="odds-"], .Popular span, .odds, td.odds').first();
     const oddsText = oddsElement.text().trim();
-    return oddsText && oddsText !== '---.-' && oddsText !== '**' ? oddsText : 'N/A';
+    return oddsText && oddsText !== '---.-' && oddsText !== '**' && oddsText !== '' ? oddsText : 'N/A';
   }
 
   /**
    * 人気の抽出
    */
-  extractPopularity($row) {
-    const popularityElement = $row.find('[id^="ninki-"], .Popular_Ninki span').first();
+  extractPopularity($row, $) {
+    const popularityElement = $row.find('[id^="ninki-"], .Popular_Ninki span, td.ninki').first();
     const popularityText = popularityElement.text().trim();
-    return popularityText && popularityText !== '**' ? popularityText : 'N/A';
+    return popularityText && popularityText !== '**' && popularityText !== '' ? popularityText : 'N/A';
   }
 
   /**
    * 騎手情報の抽出
    */
-  extractJockey($row) {
-    const jockeyElement = $row.find('.Jockey a, [class*="jockey"] a').first();
+  extractJockey($row, $) {
+    const jockeyElement = $row.find('.Jockey a, td.jockey a, a[href*="/jockey/"]').first();
     return jockeyElement.text().trim() || 'N/A';
   }
 
   /**
    * 調教師情報の抽出
    */
-  extractTrainer($row) {
-    const trainerElement = $row.find('.Trainer a, [class*="trainer"] a').first();
+  extractTrainer($row, $) {
+    const trainerElement = $row.find('.Trainer a, td.trainer a, a[href*="/trainer/"]').first();
     return trainerElement.text().trim() || 'N/A';
   }
 
